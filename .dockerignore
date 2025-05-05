@@ -1,0 +1,17 @@
+# Thư mục không cần thiết
+__pycache__/
+.vscode/
+
+# File tạm và hệ thống
+*.pyc
+*.pyo
+*.pyd
+*.log
+
+# File của hệ điều hành
+.DS_Store
+Thumbs.db
+
+# Môi trường ảo (nếu có)
+venv/
+env/

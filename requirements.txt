@@ -1,0 +1,4 @@
+fastapi
+uvicorn
+py_vncorenlp
+requests

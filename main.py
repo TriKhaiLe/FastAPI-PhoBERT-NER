@@ -55,8 +55,7 @@ app = FastAPI()
 
 
 # Tải mô hình
-current_dir = os.path.dirname(os.path.abspath(__file__))
-vncorenlp_path = os.path.join(current_dir, "vncorenlp_wrapper")
+vncorenlp_path = os.path.join(os.getcwd(), "vncorenlp_wrapper")
 download_model(save_dir=vncorenlp_path)
 
 # Khởi tạo mô hình
@@ -70,3 +69,10 @@ def predict(input: TextInput):
     # Phân tích văn bản
     output = rdrsegmenter.word_segment(input.text)
     return {"output": output}
+
+# Cho phép chỉ chạy download nếu gọi riêng
+if __name__ == "__main__":
+    import sys
+    if len(sys.argv) > 1 and sys.argv[1] == "download_only":
+        download_model(save_dir=vncorenlp_path)
+        print("Model downloaded.")
