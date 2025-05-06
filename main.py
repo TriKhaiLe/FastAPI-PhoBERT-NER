@@ -2,13 +2,21 @@ from fastapi import FastAPI
 from pydantic import BaseModel
 from datetime import datetime, timedelta
 import re
-from zoneinfo import ZoneInfo
-from typing import Optional
 from transformers import AutoModelForTokenClassification, AutoTokenizer, pipeline
 from vncorenlp import VnCoreNLP
 from tzlocal import get_localzone
+import os
+from utils.download_vncorenlp_model import download_model
+import py_vncorenlp
 
 app = FastAPI()
+
+# Tải mô hình
+vncorenlp_path = os.path.join(os.getcwd(), "vncorenlp_wrapper")
+download_model(save_dir=vncorenlp_path)
+
+# Khởi tạo mô hình
+rdrsegmenter = py_vncorenlp.VnCoreNLP(save_dir=vncorenlp_path, annotators=['wseg'])
 
 # Load NER model and tokenizer
 MODEL_PATH = "./model"  # Path to your saved model directory
