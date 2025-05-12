@@ -3,7 +3,6 @@ from pydantic import BaseModel
 from datetime import datetime, timedelta
 import re
 from transformers import AutoModelForTokenClassification, AutoTokenizer, pipeline
-from vncorenlp import VnCoreNLP
 from tzlocal import get_localzone
 import os
 from utils.download_vncorenlp_model import download_model
@@ -11,25 +10,19 @@ import py_vncorenlp
 
 app = FastAPI()
 
-# Tải mô hình
 vncorenlp_path = os.path.join(os.getcwd(), "vncorenlp_wrapper")
-download_model(save_dir=vncorenlp_path)
+# download_model(save_dir=vncorenlp_path)
 
 # Khởi tạo mô hình
 rdrsegmenter = py_vncorenlp.VnCoreNLP(save_dir=vncorenlp_path, annotators=['wseg'])
 
-# Load NER model and tokenizer
-MODEL_PATH = "./model"  # Path to your saved model directory
-model = AutoModelForTokenClassification.from_pretrained(MODEL_PATH)
-tokenizer = AutoTokenizer.from_pretrained(MODEL_PATH, use_fast=False)  # Slow tokenizer for phoBERT
-model.eval()
+# Đường dẫn model trên Hugging Face
+HUGGINGFACE_MODEL_PATH = "trilekhai/phobert-base-finetuned-ner"
 
-# Initialize VnCoreNLP for word segmentation
-rdrsegmenter = VnCoreNLP(
-    "./VnCoreNLP-1.1.1.jar",
-    annotators="wseg",
-    max_heap_size='-Xmx2g'
-)
+# Load NER model and tokenizer từ Hugging Face
+model = AutoModelForTokenClassification.from_pretrained(HUGGINGFACE_MODEL_PATH)
+tokenizer = AutoTokenizer.from_pretrained(HUGGINGFACE_MODEL_PATH, use_fast=False) 
+model.eval()
 
 # Initialize NER pipeline
 ner_pipeline = pipeline("ner", model=model, tokenizer=tokenizer, aggregation_strategy="simple")
@@ -71,22 +64,25 @@ def detect_intent(text):
 # NER processing with VnCoreNLP and pipeline
 def predict_ner(text):
     # Segment the input text
-    segmented = rdrsegmenter.tokenize(text)
-    segmented_sentence = " ".join(segmented[0])  # Assume single sentence
+    segmented_sentence = rdrsegmenter.word_segment(text)
+    print("Segmented sentence:", segmented_sentence)
     
     # Run NER pipeline
     results = ner_pipeline(segmented_sentence)
+    print("NER results:", results)
     
     # Format output to match merge_ner_tokens expectations
+    flat_results = [item for sublist in results for item in sublist]
+
     ner_output = [
         {
-            "entity": result["entity"],
-            "word": result["word"],
-            "score": float(result["score"])  # Convert np.float32 to float
+            "entity": item.get("entity", item.get("entity_group", "")),
+            "word": item["word"],
+            "score": float(item["score"])
         }
-        for result in results
+        for item in flat_results
     ]
-    
+
     return ner_output
 
 # Ghép token bị tách
@@ -185,3 +181,10 @@ async def process_text(input: TextInput):
     }
 
     return response
+
+# Cho phép chỉ chạy download nếu gọi riêng
+if __name__ == "__main__":
+    import sys
+    if len(sys.argv) > 1 and sys.argv[1] == "download_only":
+        download_model(save_dir=vncorenlp_path)
+        print("VncoreNLP Model downloaded.")

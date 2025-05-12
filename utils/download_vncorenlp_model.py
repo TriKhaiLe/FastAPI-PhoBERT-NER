@@ -13,6 +13,7 @@ def download_model(save_dir='./'):
         save_dir = save_dir[:-1]
     jar_path = os.path.join(save_dir, "VnCoreNLP-1.2.jar")
 
+    # Kiểm tra nếu model đã tồn tại
     if os.path.isdir(save_dir + "/models") and os.path.exists(jar_path):
         print("VnCoreNLP model folder " + save_dir + " already exists! Please load VnCoreNLP from this folder!")
         return

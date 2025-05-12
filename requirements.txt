@@ -2,3 +2,5 @@ fastapi
 uvicorn
 py_vncorenlp
 requests
+transformers
+tzlocal 
