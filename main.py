@@ -10,21 +10,22 @@ import py_vncorenlp
 
 app = FastAPI()
 
+# Đường dẫn VnCoreNLP
 vncorenlp_path = os.path.join(os.getcwd(), "vncorenlp_wrapper")
 # download_model(save_dir=vncorenlp_path)
 
-# Khởi tạo mô hình
+# Khởi tạo VnCoreNLP
 rdrsegmenter = py_vncorenlp.VnCoreNLP(save_dir=vncorenlp_path, annotators=['wseg'])
 
 # Đường dẫn model PhoBERT
 HUGGINGFACE_MODEL_PATH = "local/path"
 
-# Load NER model and tokenizer từ Hugging Face
+# Load NER model và tokenizer
 model = AutoModelForTokenClassification.from_pretrained(HUGGINGFACE_MODEL_PATH, local_files_only=True)
-tokenizer = AutoTokenizer.from_pretrained(HUGGINGFACE_MODEL_PATH, use_fast=False, local_files_only=True) 
+tokenizer = AutoTokenizer.from_pretrained(HUGGINGFACE_MODEL_PATH, use_fast=False, local_files_only=True)
 model.eval()
 
-# Initialize NER pipeline
+# Khởi tạo pipeline NER
 ner_pipeline = pipeline("ner", model=model, tokenizer=tokenizer, aggregation_strategy="simple")
 
 # Từ điển ánh xạ
@@ -35,11 +36,19 @@ TIME_DICT = {
     "ngày_mai": {"days": 1},
     "mai": {"days": 1},
     "mốt": {"days": 2},
+    "hôm_qua": {"days": -1},
+    "hôm trước": {"days": -2},
+    "hôm_nay": {"days": 0},
+    "bữa_nay": {"days": 0},
+    "tuần trước": {"days": -7},
+    "tuần sau": {"days": 7},
+    "tháng trước": {"months": -1},
+    "tháng sau": {"months": 1},
+    "năm_ngoái": {"years": -1},
+    "năm sau": {"years": 1}
+    # hôm qua, hôm trước, hôm nay, bữa nay, tuần trước, tuần sau, tháng trước, tháng sau, năm ngoái, năm sau
 }
-EVENT_DICT = {
-    "họp": "họp",
-    "đi chơi": "đi chơi"
-}
+
 DURATION_DICT = {
     "p": "minute",
     "phút": "minute",
@@ -49,31 +58,19 @@ DURATION_DICT = {
     "ngày": "day"
 }
 
-# Additional event-related keywords for intent detection
-INTENT_KEYWORDS = set(EVENT_DICT.keys()) | {"nhớ", "nhắc", "hẹn", "mai", "mốt"}
-
 # Input model
 class TextInput(BaseModel):
     text: str
 
-# Intent detection based on keywords
-def detect_intent(text):
-    text_lower = text.lower()
-    return any(keyword in text_lower for keyword in INTENT_KEYWORDS)
-
-# NER processing with VnCoreNLP and pipeline
+# Trích xuất thực thể (NER)
 def predict_ner(text):
-    # Segment the input text
     segmented_sentence = rdrsegmenter.word_segment(text)
     print("Segmented sentence:", segmented_sentence)
     
-    # Run NER pipeline
     results = ner_pipeline(segmented_sentence)
     print("NER results:", results)
     
-    # Format output to match merge_ner_tokens expectations
     flat_results = [item for sublist in results for item in sublist]
-
     ner_output = [
         {
             "entity": item.get("entity", item.get("entity_group", "")),
@@ -82,9 +79,9 @@ def predict_ner(text):
         }
         for item in flat_results
     ]
-
     return ner_output
 
+# Ghép token bị tách (xử lý @@)
 def merge_ner_tokens(ner_output):
     merged = []
     buffer = ""
@@ -96,7 +93,6 @@ def merge_ner_tokens(ner_output):
         word = item["word"]
         print(f"Đang xử lý token: '{word}', entity: {entity}")
 
-        # Nếu từ trước có dấu @@, thì nối tiếp, còn không thì kết thúc đoạn trước
         if entity == current_entity and "@@" in word:
             buffer += word.replace("@@", "")
         else:
@@ -106,7 +102,6 @@ def merge_ner_tokens(ner_output):
             buffer = word.replace("@@", "")
             current_entity = entity
 
-    # Thêm cái cuối nếu có
     if buffer and current_entity is not None:
         print(f"-> Thêm entity cuối cùng: {current_entity} = '{buffer}'")
         merged.append({"entity": current_entity, "word": buffer})
@@ -118,10 +113,11 @@ def merge_ner_tokens(ner_output):
 
     return merged
 
+# Nhóm thực thể theo loại
 def group_entities_by_proximity(entities):
-    grouped = []
-    buffer = []
+    grouped = {"TIME": [], "EVENT": [], "DURATION": []}
     current_entity = None
+    buffer = []
 
     for item in entities:
         entity = item["entity"]
@@ -130,78 +126,74 @@ def group_entities_by_proximity(entities):
         if entity == current_entity:
             buffer.append(word)
         else:
-            if buffer:
-                grouped.append({"entity": current_entity, "word": " ".join(buffer)})
+            if buffer and current_entity:
+                entity_type = current_entity.split('-')[1] if '-' in current_entity else current_entity
+                grouped[entity_type].append(" ".join(buffer))
             buffer = [word]
             current_entity = entity
 
-    # Thêm phần cuối
-    if buffer:
-        grouped.append({"entity": current_entity, "word": " ".join(buffer)})
+    if buffer and current_entity:
+        entity_type = current_entity.split('-')[1] if '-' in current_entity else current_entity
+        grouped[entity_type].append(" ".join(buffer))
 
     print("\n--- Kết quả nhóm thực thể ---")
-    for item in grouped:
-        print(f"  {item}")
+    for key, value in grouped.items():
+        print(f"  {key}: {value}")
     return grouped
 
-# Chuẩn hóa TIME
-def standardize_time(ner_output, timezone):
-    current_datetime = datetime.now(tz=timezone)
+# Kiểm tra sự tồn tại của TIME và EVENT
+def check_time_and_event(entities):
+    has_time = len(entities["TIME"]) > 0
+    has_event = len(entities["EVENT"]) > 0
+    return has_time and has_event
 
-    # Lọc các thực thể TIME
-    time_entities = [item["word"] for item in ner_output if "TIME" in item["entity"].upper()]
+# Chuẩn hóa TIME và kiểm tra quá khứ
+def standardize_time(entities):
+    current_datetime = datetime.now(tz=get_localzone())
+    time_entities = entities["TIME"]
+
     if not time_entities:
-        return (current_datetime + timedelta(hours=1)).isoformat()
+        return {"is_valid": False, "time": dt.isoformat()}
 
     time_str = " ".join(time_entities).lower()
     dt = current_datetime
+    has_afternoon_evening = "chiều" in time_str or "tối" in time_str
 
-    # Ngữ cảnh ngày
-    if "mai" in time_str or "ngày_mai" in time_str:
-        dt += timedelta(days=1)
-    elif "mốt" in time_str:
-        dt += timedelta(days=2)
+    # Áp dụng TIME_DICT
+    for key, value in TIME_DICT.items():
+        if key in time_str:
+            if "years" in value:
+                dt = dt.replace(year=dt.year + value["years"])
+            if "months" in value:
+                dt = dt + timedelta(days=value["months"] * 30)
+            if "days" in value:
+                dt = dt + timedelta(days=value["days"])
+            if "hour" in value:
+                dt = dt.replace(hour=value["hour"], minute=value.get("minute", 0))
 
-    # Ngữ cảnh buổi
-    if "sáng" in time_str:
-        dt = dt.replace(hour=8, minute=0)
-    elif "chiều" in time_str:
-        dt = dt.replace(hour=14, minute=0)
-    elif "tối" in time_str:
-        dt = dt.replace(hour=18, minute=0)
-
-    # Chuẩn hóa giờ và phút từ text
-    hour = None
-    minute = None
-
-    # Bắt giờ
-    hour_match = re.search(r"(\d+)\s*(h|giờ)", time_str)
+    # Xử lý giờ cụ thể
+    hour_match = re.search(r"(\d+)[h|giờ](\d+)?[p|phút]?", time_str)
     if hour_match:
         hour = int(hour_match.group(1))
+        minute = int(hour_match.group(2)) if hour_match.group(2) else 0
+        # Nếu giờ < 12 và có "chiều" hoặc "tối", cộng 12 giờ
+        if hour < 12 and has_afternoon_evening:
+            hour += 12
+        dt = dt.replace(hour=hour, minute=minute)
 
-    # Bắt phút
-    minute_match = re.search(r"(\d+)\s*(p|phút)", time_str)
-    if minute_match:
-        minute = int(minute_match.group(1))
+    # Kiểm tra nếu TIME trong quá khứ
+    is_valid = dt >= current_datetime
 
-    # Nếu có thông tin thì cập nhật, ưu tiên ghép vào giờ mặc định
-    if hour is not None or minute is not None:
-        dt = dt.replace(
-            hour=hour if hour is not None else dt.hour,
-            minute=minute if minute is not None else 0
-        )
-
-    return dt.isoformat()
+    return {"is_valid": is_valid, "time": dt.isoformat()}
 
 # Chuẩn hóa DURATION
-def standardize_duration(ner_output):
-    # Lọc các thực thể thuộc loại DURATION
-    duration_entities = [item["word"] for item in ner_output if "DURATION" in item["entity"].upper()]
+def standardize_duration(entities):
+    duration_entities = entities["DURATION"]
     if not duration_entities:
         return "1 hour"
 
     duration_str = " ".join(duration_entities).lower()
-    match = re.search(r"(\d+)\s*(p|phút|h|giờ|tiếng|ngày)", duration_str)
+    match = re.search(r"(\d+)(p|phút|h|giờ|tiếng|ngày)", duration_str)
     if match:
         number = int(match.group(1))
         unit = DURATION_DICT.get(match.group(2), "minute")
@@ -209,36 +201,49 @@ def standardize_duration(ner_output):
     return "1 hour"
 
 # Chuẩn hóa EVENT
-def standardize_event(ner_output):
-    event_entities = [item["word"] for item in ner_output if "EVENT" in item["entity"].upper()]
-    if not event_entities:
-        return None
-    return " ".join(event_entities)
+def standardize_event(entities):
+    event_entities = entities["EVENT"]
+    return " ".join(event_entities) if event_entities else None
 
 @app.post("/schedule")
 async def process_text(input: TextInput):
     text = input.text
-    timezone = get_localzone()  # Automatically detect server's timezone
 
-    # Bước 1: Nhận diện intent
-    intent = detect_intent(text)
-
-    # Bước 2: Trích xuất thực thể
+    # Bước 1: Trích xuất thực thể
     raw_ner = predict_ner(text)
     merged_ner = merge_ner_tokens(raw_ner)
     grouped_ner = group_entities_by_proximity(merged_ner)
 
-    # Bước 3: Chuẩn hóa thực thể
+    # Kiểm tra sự tồn tại của TIME và EVENT
+    if not check_time_and_event(grouped_ner):
+        return {
+            "intent": False,
+            "TIME": None,
+            "EVENT": None,
+            "DURATION": None
+        }
+
+    # Bước 2: Chuẩn hóa thực thể
+    time_result = standardize_time(grouped_ner)
+
+    # Kiểm tra nếu TIME trong quá khứ
+    if not time_result["is_valid"]:
+        return {
+            "intent": False,
+            "TIME": None,
+            "EVENT": None,
+            "DURATION": None
+        }
+
     response = {
-        "intent": intent,
-        "TIME": standardize_time(grouped_ner, timezone) if intent else None,
-        "EVENT": standardize_event(grouped_ner) if intent else None,
-        "DURATION": standardize_duration(grouped_ner) if intent else None
+        "intent": True,
+        "TIME": time_result["time"],
+        "EVENT": standardize_event(grouped_ner),
+        "DURATION": standardize_duration(grouped_ner)
     }
 
     return response
 
-# Cho phép chỉ chạy download nếu gọi riêng
 if __name__ == "__main__":
     import sys
     if len(sys.argv) > 1 and sys.argv[1] == "download_only":
