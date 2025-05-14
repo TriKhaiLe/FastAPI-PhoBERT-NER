@@ -19,10 +19,10 @@ RUN pip install torch --index-url https://download.pytorch.org/whl/cpu
 COPY . .
 
 # Tải model (sẽ không bị lặp nếu model đã tồn tại từ lần trước)
-RUN python main.py download_only
+RUN python utils/download_vncorenlp_model.py
 
 # Tải model PhoBERT
-# RUN python utils/download_phobert_model.py
+RUN python utils/download_phobert_model.py
 
 # Mở cổng mặc định FastAPI
 EXPOSE 8000

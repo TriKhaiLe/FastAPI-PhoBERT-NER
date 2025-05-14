@@ -5,20 +5,23 @@ import re
 from transformers import AutoModelForTokenClassification, AutoTokenizer, pipeline
 from tzlocal import get_localzone
 import os
-from utils.download_vncorenlp_model import download_model
 import py_vncorenlp
 
 app = FastAPI()
 
-# Đường dẫn VnCoreNLP
-vncorenlp_path = os.path.join(os.getcwd(), "vncorenlp_wrapper")
-# download_model(save_dir=vncorenlp_path)
+CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
 
-# Khởi tạo VnCoreNLP
+# Đường dẫn VnCoreNLP
+vncorenlp_path = os.path.join(CURRENT_DIR, "vncorenlp_wrapper")
+print("Current working directory:", os.getcwd())
+
+# Khởi tạo VnCoreNLP Segmenter
 rdrsegmenter = py_vncorenlp.VnCoreNLP(save_dir=vncorenlp_path, annotators=['wseg'])
+print("Current working directory:", os.getcwd())
 
 # Đường dẫn model PhoBERT
-HUGGINGFACE_MODEL_PATH = "local/path"
+CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
+HUGGINGFACE_MODEL_PATH = os.path.join(CURRENT_DIR, "model")
 
 # Load NER model và tokenizer
 model = AutoModelForTokenClassification.from_pretrained(HUGGINGFACE_MODEL_PATH, local_files_only=True)
@@ -30,6 +33,11 @@ ner_pipeline = pipeline("ner", model=model, tokenizer=tokenizer, aggregation_str
 
 # Từ điển ánh xạ
 TIME_DICT = {
+    # chút nữa , xíu nữa , chút_xíu nữa , tí nữa
+    "chút nữa": {"hour": 0, "minute": 15},
+    "xíu nữa": {"hour": 0, "minute": 15},
+    "chút_xíu nữa": {"hour": 0, "minute": 15},
+    "tí nữa": {"hour": 0, "minute": 15},
     "sáng": {"hour": 8, "minute": 0},
     "chiều": {"hour": 14, "minute": 0},
     "tối": {"hour": 18, "minute": 0},
@@ -243,9 +251,3 @@ async def process_text(input: TextInput):
     }
 
     return response
-
-if __name__ == "__main__":
-    import sys
-    if len(sys.argv) > 1 and sys.argv[1] == "download_only":
-        download_model(save_dir=vncorenlp_path)
-        print("VncoreNLP Model downloaded.")

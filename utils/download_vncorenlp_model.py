@@ -47,3 +47,8 @@ def download_model(save_dir='./'):
     # parse
     download_file("https://raw.githubusercontent.com/vncorenlp/VnCoreNLP/master/models/dep/vi-dep.xz",
                   save_dir + "/models/dep/vi-dep.xz")
+    
+if __name__ == "__main__":
+    vncorenlp_path = os.path.join(os.getcwd(), "vncorenlp_wrapper")
+    download_model(save_dir=vncorenlp_path)
+    print("VncoreNLP Model downloaded.")
