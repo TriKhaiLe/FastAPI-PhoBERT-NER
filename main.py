@@ -201,11 +201,12 @@ def standardize_duration(entities):
         return "1 hour"
 
     duration_str = " ".join(duration_entities).lower()
-    match = re.search(r"(\d+)(p|phút|h|giờ|tiếng|ngày)", duration_str)
+    match = re.search(r"(\d+)\s*(p|phút|h|giờ|tiếng|ngày)", duration_str)
     if match:
         number = int(match.group(1))
         unit = DURATION_DICT.get(match.group(2), "minute")
         return f"{number} {unit}"
+
     return "1 hour"
 
 # Chuẩn hóa EVENT
