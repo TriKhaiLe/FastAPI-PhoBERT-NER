@@ -20,7 +20,6 @@ rdrsegmenter = py_vncorenlp.VnCoreNLP(save_dir=vncorenlp_path, annotators=['wseg
 print("Current working directory:", os.getcwd())
 
 # Đường dẫn model PhoBERT
-CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
 HUGGINGFACE_MODEL_PATH = os.path.join(CURRENT_DIR, "model")
 
 # Load NER model và tokenizer
@@ -33,7 +32,6 @@ ner_pipeline = pipeline("ner", model=model, tokenizer=tokenizer, aggregation_str
 
 # Từ điển ánh xạ
 TIME_DICT = {
-    # chút nữa , xíu nữa , chút_xíu nữa , tí nữa
     "chút nữa": {"hour": 0, "minute": 15},
     "xíu nữa": {"hour": 0, "minute": 15},
     "chút_xíu nữa": {"hour": 0, "minute": 15},
@@ -54,7 +52,6 @@ TIME_DICT = {
     "tháng sau": {"months": 1},
     "năm_ngoái": {"years": -1},
     "năm sau": {"years": 1}
-    # hôm qua, hôm trước, hôm nay, bữa nay, tuần trước, tuần sau, tháng trước, tháng sau, năm ngoái, năm sau
 }
 
 DURATION_DICT = {
@@ -69,6 +66,7 @@ DURATION_DICT = {
 # Input model
 class TextInput(BaseModel):
     text: str
+    current_datetime: str  # ISO 8601 format, e.g., "2025-05-14T22:06:00+07:00"
 
 # Trích xuất thực thể (NER)
 def predict_ner(text):
@@ -156,8 +154,8 @@ def check_time_and_event(entities):
     return has_time and has_event
 
 # Chuẩn hóa TIME và kiểm tra quá khứ
-def standardize_time(entities):
-    current_datetime = datetime.now(tz=get_localzone())
+def standardize_time(entities, current_datetime_str):
+    current_datetime = datetime.fromisoformat(current_datetime_str)
     time_entities = entities["TIME"]
 
     if not time_entities:
@@ -173,11 +171,13 @@ def standardize_time(entities):
             if "years" in value:
                 dt = dt.replace(year=dt.year + value["years"])
             if "months" in value:
-                dt = dt + timedelta(days=value["months"] * 30)
+                dt = dt + timedelta(days=value["months"] * 30)  # Gần đúng 1 tháng = 30 ngày
             if "days" in value:
                 dt = dt + timedelta(days=value["days"])
-            if "hour" in value:
-                dt = dt.replace(hour=value["hour"], minute=value.get("minute", 0))
+            if "hour" in value or "minute" in value:
+                hour = value.get("hour", dt.hour)
+                minute = value.get("minute", dt.minute)
+                dt = dt.replace(hour=hour, minute=minute)
 
     # Xử lý giờ cụ thể
     hour_match = re.search(r"(\d+)[h|giờ](\d+)?[p|phút]?", time_str)
@@ -206,7 +206,6 @@ def standardize_duration(entities):
         number = int(match.group(1))
         unit = DURATION_DICT.get(match.group(2), "minute")
         return f"{number} {unit}"
-
     return "1 hour"
 
 # Chuẩn hóa EVENT
@@ -217,6 +216,7 @@ def standardize_event(entities):
 @app.post("/schedule")
 async def process_text(input: TextInput):
     text = input.text
+    current_datetime = input.current_datetime
 
     # Bước 1: Trích xuất thực thể
     raw_ner = predict_ner(text)
@@ -233,7 +233,7 @@ async def process_text(input: TextInput):
         }
 
     # Bước 2: Chuẩn hóa thực thể
-    time_result = standardize_time(grouped_ner)
+    time_result = standardize_time(grouped_ner, current_datetime)
 
     # Kiểm tra nếu TIME trong quá khứ
     if not time_result["is_valid"]:
