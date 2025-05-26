@@ -1,5 +1,5 @@
 from fastapi import FastAPI
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from datetime import datetime, timedelta
 import re
 from transformers import AutoModelForTokenClassification, AutoTokenizer, pipeline
@@ -66,7 +66,7 @@ DURATION_DICT = {
 # Input model
 class TextInput(BaseModel):
     text: str
-    current_datetime: str  # ISO 8601 format, e.g., "2025-05-14T22:06:00+07:00"
+    current_datetime: str = Field(default="2025-05-05T22:22:22+07:00")  # ISO 8601 format, mặc định là thời gian cố định để test trên Swagger
 
 # Trích xuất thực thể (NER)
 def predict_ner(text):
