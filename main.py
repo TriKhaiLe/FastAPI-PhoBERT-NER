@@ -29,15 +29,19 @@ model.eval()
 # Khởi tạo pipeline NER
 ner_pipeline = pipeline("ner", model=model, tokenizer=tokenizer, aggregation_strategy="simple")
 
-# Từ điển ánh xạ
-TIME_DICT = {
+# Thời gian tuyệt đối - SET giá trị cố định
+ABSOLUTE_TIME_DICT = {
+    "sáng": {"hour": 8, "minute": 0},
+    "chiều": {"hour": 14, "minute": 0}, 
+    "tối": {"hour": 18, "minute": 0},
+}
+
+# Thời gian tương đối - CỘNG THÊM vào thời gian hiện tại
+RELATIVE_TIME_DICT = {
     "chút nữa": {"hour": 0, "minute": 15},
     "xíu nữa": {"hour": 0, "minute": 15},
     "chút_xíu nữa": {"hour": 0, "minute": 15},
     "tí nữa": {"hour": 0, "minute": 15},
-    "sáng": {"hour": 8, "minute": 0},
-    "chiều": {"hour": 14, "minute": 0},
-    "tối": {"hour": 18, "minute": 0},
     "ngày_mai": {"days": 1},
     "mai": {"days": 1},
     "mốt": {"days": 2},
@@ -164,32 +168,82 @@ def standardize_time(entities, current_datetime_str):
         return {"is_valid": False, "time": current_datetime.isoformat()}
 
     time_str = " ".join(time_entities).lower()
+
+    # Kiểm tra tính hợp lệ của TIME
+    has_valid_time = any(key in time_str for key in ABSOLUTE_TIME_DICT) or any(key in time_str for key in RELATIVE_TIME_DICT)
+    has_hour_match = bool(re.search(r"(\d+)[h|giờ](\d+)?[p|phút]?", time_str))
+    if not (has_valid_time or has_hour_match):
+        return {"is_valid": False, "time": current_datetime.isoformat()}
+
     dt = current_datetime
     has_afternoon_evening = "chiều" in time_str or "tối" in time_str
 
-    # Áp dụng TIME_DICT
-    for key, value in TIME_DICT.items():
+    # Xử lý thời gian tương đối (CỘNG THÊM)
+    for key, value in RELATIVE_TIME_DICT.items():
         if key in time_str:
             if "years" in value:
                 dt = dt.replace(year=dt.year + value["years"])
             if "months" in value:
-                dt = dt + timedelta(days=value["months"] * 30)  # Gần đúng 1 tháng = 30 ngày
+                dt = dt + timedelta(days=value["months"] * 30)
             if "days" in value:
                 dt = dt + timedelta(days=value["days"])
+            if "hour" in value or "minute" in value:
+                dt = dt + timedelta(hours=value.get("hour", 0), minutes=value.get("minute", 0))
+
+    # Xử lý thời gian tuyệt đối (SET cố định)
+    for key, value in ABSOLUTE_TIME_DICT.items():
+        if key in time_str:
             if "hour" in value or "minute" in value:
                 hour = value.get("hour", dt.hour)
                 minute = value.get("minute", dt.minute)
                 dt = dt.replace(hour=hour, minute=minute)
 
-    # Xử lý giờ cụ thể
-    hour_match = re.search(r"(\d+)[h|giờ](\d+)?[p|phút]?", time_str)
-    if hour_match:
-        hour = int(hour_match.group(1))
-        minute = int(hour_match.group(2)) if hour_match.group(2) else 0
-        # Nếu giờ < 12 và có "chiều" hoặc "tối", cộng 12 giờ
-        if hour < 12 and has_afternoon_evening:
-            hour += 12
-        dt = dt.replace(hour=hour, minute=minute)
+    # Xử lý giờ và phút kết hợp (như "8h30", "1 tiếng 30p nữa")
+    # Pattern 1: "Xh[Yp] [nữa]?" - ví dụ: "8h30", "1 tiếng 30p nữa"
+    hour_minute_match = re.search(r"(\d+)\s*(tiếng|giờ|h)\s*(\d+)?\s*(phút|p)?\s*(nữa)?", time_str)
+    if hour_minute_match:
+        hour_value = int(hour_minute_match.group(1))
+        minute_value = int(hour_minute_match.group(3)) if hour_minute_match.group(3) else 0
+        is_relative = hour_minute_match.group(5) is not None  # có "nữa" không?
+        
+        if is_relative:
+            # "1 tiếng 30p nữa" - cộng thêm
+            dt = dt + timedelta(hours=hour_value, minutes=minute_value)
+        else:
+            # "8h30" - set cố định
+            if hour_value < 12 and has_afternoon_evening:
+                hour_value += 12
+            dt = dt.replace(hour=hour_value, minute=minute_value)
+    else:
+        # Xử lý riêng lẻ nếu không match pattern kết hợp
+        
+        # Xử lý giờ đơn lẻ (như "8h", "1 tiếng nữa")
+        hour_only_match = re.search(r"(\d+)\s*(tiếng|giờ|h)\s*(nữa)?", time_str)
+        if hour_only_match:
+            hour_value = int(hour_only_match.group(1))
+            is_relative = hour_only_match.group(3) is not None
+            
+            if is_relative:
+                # "1 tiếng nữa" - cộng thêm
+                dt = dt + timedelta(hours=hour_value)
+            else:
+                # "8h" - set cố định
+                if hour_value < 12 and has_afternoon_evening:
+                    hour_value += 12
+                dt = dt.replace(hour=hour_value, minute=0)
+
+        # Xử lý phút đơn lẻ (như "30p nữa")
+        minute_only_match = re.search(r"(\d+)\s*(phút|p)\s*(nữa)?", time_str)
+        if minute_only_match:
+            minute_value = int(minute_only_match.group(1))
+            is_relative = minute_only_match.group(3) is not None
+            
+            if is_relative:
+                # "30 phút nữa" - cộng thêm
+                dt = dt + timedelta(minutes=minute_value)
+            else:
+                # "30 phút" - set cố định (ít dùng)
+                dt = dt.replace(minute=minute_value)
 
     # Kiểm tra nếu TIME trong quá khứ
     is_valid = dt >= current_datetime
