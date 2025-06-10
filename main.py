@@ -3,7 +3,6 @@ from pydantic import BaseModel, Field
 from datetime import datetime, timedelta
 import re
 from transformers import AutoModelForTokenClassification, AutoTokenizer, pipeline
-from tzlocal import get_localzone
 import os
 import py_vncorenlp
 
@@ -63,10 +62,13 @@ DURATION_DICT = {
     "ngày": "day"
 }
 
+# Ngưỡng score cho NER
+NER_SCORE_THRESHOLD = 0.6
+
 # Input model
 class TextInput(BaseModel):
     text: str
-    current_datetime: str = Field(default="2025-05-05T22:22:22+07:00")  # ISO 8601 format, mặc định là thời gian cố định để test trên Swagger
+    current_datetime: str = Field(default="2025-05-05T22:22:22+07:00")  # ISO 8601 format
 
 # Trích xuất thực thể (NER)
 def predict_ner(text):
@@ -83,7 +85,7 @@ def predict_ner(text):
             "word": item["word"],
             "score": float(item["score"])
         }
-        for item in flat_results
+        for item in flat_results if float(item["score"]) >= NER_SCORE_THRESHOLD
     ]
     return ner_output
 
@@ -159,7 +161,7 @@ def standardize_time(entities, current_datetime_str):
     time_entities = entities["TIME"]
 
     if not time_entities:
-        return {"is_valid": False, "time": dt.isoformat()}
+        return {"is_valid": False, "time": current_datetime.isoformat()}
 
     time_str = " ".join(time_entities).lower()
     dt = current_datetime
