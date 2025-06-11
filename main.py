@@ -42,6 +42,7 @@ RELATIVE_TIME_DICT = {
     "xíu nữa": {"hour": 0, "minute": 15},
     "chút_xíu nữa": {"hour": 0, "minute": 15},
     "tí nữa": {"hour": 0, "minute": 15},
+    "nửa tiếng nữa": {"hour": 0, "minute": 30},
     "ngày_mai": {"days": 1},
     "mai": {"days": 1},
     "mốt": {"days": 2},
@@ -98,22 +99,40 @@ def merge_ner_tokens(ner_output):
     merged = []
     buffer = ""
     current_entity = None
+    buffer_ends_with_subword = False  # Tracking nếu buffer kết thúc bằng subword
 
     print("\n--- Bắt đầu merge NER tokens ---")
     for item in ner_output:
         entity = item.get("entity_group", item.get("entity", ""))
         word = item["word"]
+        word_has_subword = "@@" in word
         print(f"Đang xử lý token: '{word}', entity: {entity}")
 
-        if entity == current_entity and "@@" in word:
-            buffer += word.replace("@@", "")
+        if entity == current_entity:
+            # Cùng entity → merge
+            if buffer_ends_with_subword or word_has_subword:
+                # Một trong hai có @@, ghép trực tiếp không có space
+                buffer += word.replace("@@", "")
+                print(f"-> Merge subword: '{buffer}'")
+            else:
+                # Không có @@, ghép với khoảng trắng
+                buffer += " " + word
+                print(f"-> Merge bình thường: '{buffer}'")
         else:
+            # Khác entity → lưu buffer cũ và tạo mới
             if buffer and current_entity is not None:
                 print(f"-> Thêm entity đã merge: {current_entity} = '{buffer}'")
                 merged.append({"entity": current_entity, "word": buffer})
+            
+            # Bắt đầu entity mới
             buffer = word.replace("@@", "")
             current_entity = entity
+            print(f"-> Bắt đầu entity mới: {current_entity} = '{buffer}'")
 
+        # Update trạng thái subword cho lần lặp tiếp theo
+        buffer_ends_with_subword = word_has_subword
+
+    # Thêm entity cuối cùng
     if buffer and current_entity is not None:
         print(f"-> Thêm entity cuối cùng: {current_entity} = '{buffer}'")
         merged.append({"entity": current_entity, "word": buffer})
@@ -170,8 +189,10 @@ def standardize_time(entities, current_datetime_str):
     time_str = " ".join(time_entities).lower()
 
     # Kiểm tra tính hợp lệ của TIME
+    
     has_valid_time = any(key in time_str for key in ABSOLUTE_TIME_DICT) or any(key in time_str for key in RELATIVE_TIME_DICT)
-    has_hour_match = bool(re.search(r"(\d+)[h|giờ](\d+)?[p|phút]?", time_str))
+    # cho phép chỉ có phút hoặc có cả giờ và phút
+    has_hour_match = bool(re.search(r"(\d+)[h|giờ](\d+)?[p|phút]?|(\d+)[p|phút]", time_str))
     if not (has_valid_time or has_hour_match):
         return {"is_valid": False, "time": current_datetime.isoformat()}
 
